@@ -6,27 +6,31 @@
 
 #ifndef __DATATYPES__
 #define __DATATYPES__
+
 #include <ucontext.h>
 
-typedef enum {pronta, suspensa} status_t;
+typedef enum {System, User} task_class;
+typedef enum {New, Ready, Running, Suspended, Terminated} task_status;
 
 // Estrutura que define uma tarefa
 typedef struct task_t
 {
     struct task_t *prev, *next;
-    int tid;
-    ucontext_t context;
-    status_t status;
-    struct task_t *wqueue;
-    int prio_s;
-    int prio_d;
-    int ticks_t;
+    int t_id;
+    ucontext_t t_context;
+    int t_sprio;
+    int t_dprio;
+    unsigned int t_ticks;
+    task_class t_class;
+    task_status t_status;
     unsigned int created_at;
+    unsigned int exec_time;
     unsigned int proc_time;
     unsigned int activations;
-    struct task_t * joined;
-    int exitCode;
-    int allowPreemp;
+    struct task_t *join;
+    struct task_t **current_queue;
+    int join_exitCode;
+    unsigned int wake_up_at;
 } task_t ;
 
 // estrutura que define um semáforo
