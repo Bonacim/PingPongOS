@@ -1,7 +1,5 @@
-// PingPongOS - PingPong Operating System
-// Prof. Carlos A. Maziero, DAINF UTFPR
-// Versão 1.0 -- Março de 2015
-//
+// Alexandre Nadolni Bonacim
+// João Felipe Sarggin Machado
 // Estruturas de dados internas do sistema operacional
 
 #ifndef __DATATYPES__
