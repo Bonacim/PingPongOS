@@ -1,0 +1,262 @@
+// MQUEUE CREATE: Cria uma fila no esquema produtor / consumidor //
+
+int mqueue_create (mqueue_t *queue, int max, int size)
+{
+	if(queue == NULL)                                       // Verifica ponteiro
+		return -1;
+
+    task_class save = current_task->t_class;                // Desativa preempção
+	current_task->t_class = System;
+
+    queue_t* aux = (queue_t*)mqueue;
+    int found = 0;
+    int i;
+    for(i = queue_size((queue_t*)mqueue); i > 0; i--)       // Procura pela message queue na fila
+    {                                                       // se achar, já foi inicializada
+        if (aux == (queue_t*)queue)
+        {
+            found = 1;
+            break;
+        }
+        aux = aux->next;
+    }
+	if(found)
+	{
+		current_task->t_class = save;
+		return -1;
+	}
+
+	queue->next = NULL;                                    // Se não achar, então cria ela
+	queue->prev = NULL;
+	queue_append(&mqueue,(queue_t*)queue);
+
+	queue->max = max;                                      // Com sua devida inicialização
+	queue->size = size;
+    queue->first_msg = 0;
+    queue->last_msg = 0;
+	queue->msgs = (char*)malloc(queue->max*queue->size);
+
+	if (sem_create (&queue->sem_buffer, 1) == -1)
+    {
+        current_task->t_class = save;
+		return -1;
+    }
+	if (sem_create (&queue->sem_item, 0) == -1)
+    {
+        current_task->t_class = save;
+		return -1;
+    }
+	if (sem_create (&queue->sem_vaga, max) == -1)
+    {
+        current_task->t_class = save;
+		return -1;
+    }
+
+	current_task->t_class = save;
+	return 0;
+}
+
+// MQUEUE-SEND: Envia uma mensagem para fila, bloqueando a tarefa caso não haja vaga na fila //
+
+int mqueue_send (mqueue_t *queue, void *msg)
+{
+	if(msg == NULL)                                         // Ponteiro deve ser válido
+		return -1;
+
+	task_class save = current_task->t_class;                // Desativa Preempção
+	current_task->t_class = System;
+
+    char *msg_buffer = (char*)msg;
+
+    queue_t* aux = (queue_t*)mqueue;
+    int found = 0;
+    int i;
+    for(i = queue_size((queue_t*)mqueue); i > 0; i--)       // Procura a mqueue na fila apropriada para ver se
+    {                                                       // essa mqueue ja foi inicializada
+        if (aux == (queue_t*)queue)
+        {
+            found = 1;
+            break;
+        }
+        aux = aux->next;
+    }
+	if(!found)
+	{
+		current_task->t_class = save;
+		return -1;
+	}
+	if (sem_down (&queue->sem_vaga) == -1)                   // Esquema de travas de buffer, vaga e item, conforme
+    {                                                        // problema clássico produtor / consumidor
+        current_task->t_class = save;
+		return -1;
+    }
+	if (sem_down (&queue->sem_buffer) == -1)
+    {
+        current_task->t_class = save;
+		return -1;
+    }
+
+    memcpy(queue->msgs + (queue->last_msg*queue->size),msg_buffer,queue->size);
+    queue->last_msg = (queue->last_msg + 1) % queue->max;
+
+	if (sem_up (&queue->sem_buffer) == -1)
+    {
+        current_task->t_class = save;
+		return -1;
+    }
+	if (sem_up (&queue->sem_item) == -1)
+    {
+        current_task->t_class = save;
+		return -1;
+    }
+
+	current_task->t_class = save;
+	return 0;
+}
+
+// MQUEUE RECV: Retira uma mensagem da fila, bloqueando a tarefa caso não haja mensagens //
+
+int mqueue_recv (mqueue_t *queue, void *msg)
+{
+	if(msg == NULL)                                         // Verifica ponteiro
+		return -1;
+
+	task_class save = current_task->t_class;                // Desativa preempções
+	current_task->t_class = System;
+
+    char *msg_buffer = (char*)msg;
+
+    queue_t* aux = (queue_t*)mqueue;
+    int found = 0;
+    int i;
+    for(i = queue_size((queue_t*)mqueue); i > 0; i--)
+    {
+        if (aux == (queue_t*)queue)
+        {
+            found = 1;                                         // Verifica se a mqueue já foi inicializada
+            break;                                             // (deve estar na fila apropriada)
+        }
+        aux = aux->next;
+    }
+	if(!found)
+	{
+		current_task->t_class = save;
+		return -1;
+	}
+	if (sem_down (&queue->sem_item) == -1)                     // Esquema de travas de buffer, vaga e item, conforme
+    {                                                          // problema clássico produtor / consumidor
+        current_task->t_class = save;
+		return -1;
+    }
+	if (sem_down (&queue->sem_buffer) == -1)
+    {
+        current_task->t_class = save;
+		return -1;
+    }
+
+    memcpy(msg_buffer, queue->msgs + (queue->first_msg*queue->size),queue->size);
+    queue->first_msg = (queue->first_msg + 1) % queue->max;
+
+
+	if (sem_up (&queue->sem_buffer) == -1)
+    {
+        current_task->t_class = save;
+		return -1;
+    }
+	if (sem_up (&queue->sem_vaga) == -1)
+    {
+        current_task->t_class = save;
+		return -1;
+    }
+
+	current_task->t_class = save;
+	return 0;
+}
+
+// MQUEUE DESTROY: Destrói uma fila, liberando todas as tarefas que esperavam para operar sobre ela //
+
+int mqueue_destroy (mqueue_t *queue)
+{
+	task_class save = current_task->t_class;                        // Desativa preempções
+	current_task->t_class = System;
+
+    queue_t* aux = (queue_t*)mqueue;
+    int found = 0;
+    int i;
+    for(i = queue_size((queue_t*)mqueue); i > 0; i--)
+    {
+        if (aux == (queue_t*)queue)
+        {
+            found = 1;
+            break;
+        }
+        aux = aux->next;                                    // Procura ela na fila apropriada
+    }
+	if(!found)
+	{
+		current_task->t_class = save;
+		return -1;
+	}
+
+	free(queue->msgs);                                      // Desaloca a mqueue
+    queue->first_msg = 0;
+    queue->last_msg = 0;
+
+	if (sem_destroy (&queue->sem_buffer) == -1)
+    {
+    current_task->t_class = save;
+		return -1;
+    }
+	if (sem_destroy (&queue->sem_item) == -1)
+    {
+        current_task->t_class = save;
+		return -1;
+    }
+	if (sem_destroy (&queue->sem_vaga) == -1)
+    {
+        current_task->t_class = save;
+		return -1;
+    }
+
+	current_task->t_class = save;
+	return 0;
+}
+
+// MQUEUE MSGS: Conta quantas mensagens tem na fila //
+
+int mqueue_msgs (mqueue_t *queue)
+{
+	task_class save = current_task->t_class;                // Desativa preempções
+	current_task->t_class = System;
+
+    queue_t* aux = (queue_t*)mqueue;
+    int found = 0;
+    int i;
+    for(i = queue_size((queue_t*)mqueue); i > 0; i--)
+    {
+        if (aux == (queue_t*)queue)
+        {
+            found = 1;                                      // Procura ela na fila apropriada, para ver se foi
+            break;                                          // Inicializada
+        }
+        aux = aux->next;
+    }
+	if(!found)
+	{
+		current_task->t_class = save;
+		return -1;
+	}
+
+    int n_msgs;                                             // Conta a quantidade de mensagens
+    if (queue->last_msg < queue->first_msg)
+    {
+        n_msgs = queue->last_msg + queue->max - queue->first_msg;
+    }
+    else
+    {
+        n_msgs = queue->last_msg - queue->first_msg;
+    }
+
+	current_task->t_class = save;
+	return n_msgs;
+}

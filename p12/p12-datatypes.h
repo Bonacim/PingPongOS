@@ -63,7 +63,7 @@ typedef struct
   struct mqueue_t *prev, *next;
 	int max, size;
 	char *msgs;
-  int first_msg, last_msg;
+    int first_msg, last_msg;
 	semaphore_t sem_buffer, sem_item, sem_vaga ;
 } mqueue_t ;
 

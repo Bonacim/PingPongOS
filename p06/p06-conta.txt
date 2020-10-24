@@ -1,0 +1,121 @@
+// TASK CREATE: Cria uma tarefa, inicializando-a e dando a seu devido contexto //
+
+int task_create (task_t *task, void (*start_func)(void *), void *arg)
+{
+    char *stack ;
+    stack = malloc (STACKSIZE) ;
+
+    if (stack)                                          // Se o MALLOC for bem sucedido, aloca a STACK da tarefa
+    {
+        task->next = NULL;
+        task->prev = NULL;
+        task->wqueue = NULL;
+
+        task->tid = ++newTaskID;
+        task->created_at = sys_time;
+		task->proc_time = 0;
+		task->activations = 0;
+
+        getcontext(&(task->context));
+        task->context.uc_stack.ss_sp = stack;
+        task->context.uc_stack.ss_size = STACKSIZE;
+        task->context.uc_stack.ss_flags = 0;
+        task->context.uc_link = 0;
+
+        makecontext (&(task->context), (void *)(*start_func), 1, arg);      // Define a função de contexto da tarefa
+
+        #ifdef DEBUG
+        printf ("task_create: criou tarefa %d\n", task->tid);
+        #endif
+
+        if (task != &dispatcherTask)                                        // Outras tarefas vão para a fila de
+        {                                                                   // prontas
+            queue_append((queue_t**)&ready_queue, (queue_t*)task);
+            task->wqueue = ready_queue;
+            task->status = pronta;
+            task_setprio(task, 0);
+            userTasks++;
+        }
+
+        return task->tid;
+    }
+
+    else
+    {
+        printf("Erro na criação da pilha!");
+        return -1;
+    }
+}
+
+// TASK EXIT: Encera uma tarefa, devolvendo o controle ao DISPATCHER e contabilizando seus tempos //
+//            de execução e processamento. //
+//            O DISPATCHER não passa o controle para ninguém //
+
+void task_exit (int exitCode)
+{
+    #ifdef DEBUG
+    printf ("task_exit: tarefa %d sendo encerrada\n", currentTask->tid);        // Contabiliza tempos
+    #endif
+    int exec_time = sys_time - currentTask->created_at;
+    printf("Task %d exit: execution time %d ms, processor time %d ms, %d activations\n",currentTask->tid,exec_time,currentTask->proc_time,currentTask->activations);
+
+    if (currentTask == &dispatcherTask)                             // o DISPATCHER devolve execução para MAIN
+    {
+        task_switch(&mainTask);
+    }
+
+    queue_remove((queue_t**)&ready_queue, (queue_t*)currentTask);   // Remove a tarefa da fila de prontas
+    userTasks--;
+
+    task_switch(&dispatcherTask);
+}
+
+// TASK SWITCH: Realiza a troca de contexto entre as tarefas, contabilizando as ativações e //
+//              definindo a task atual em execução //
+
+
+int task_switch (task_t *task)
+{
+    task_t *aux = currentTask;                              // Guarda o ponteiro da tarefa que vai sair, caso a
+    currentTask = task;                                     // troca de contexto seja mal sucedida
+    currentTask->activations++;
+
+    #ifdef DEBUG
+    printf ("task_switch: trocando contexto %d -> %d\n", aux->tid, task->tid);
+    #endif
+
+    if (swapcontext (&(aux->context), &(task->context)) < 0)    // Se a troca falhar, retorna para a tarefa anterior
+    {
+        currentTask = aux;
+        return -1;
+    }
+
+    return 0;
+}
+
+// TASK YIELD: Retorna a tarefa em execução para a fila de prontas e devolve o controle ao DISPATCHER //
+
+void task_yield ()
+{
+    task_switch(&dispatcherTask);
+}
+
+// DISPATCHER: Aciona o SCHEDULER, define o quantum da tarefa que executará e passa o controle para a mesma //
+//             O DISPATCHER também acorda tarefas suspensas pela chamada TASK SLEEP //
+
+void dispatcher_body ()
+{
+    task_t *next;
+
+    while (userTasks > 0)
+    {
+        next = scheduler();             // Escolhe a próxima tarefa a ganhar o processador
+
+        if (next)
+        {
+            next->ticks_t = TICKS;      // Realiza a devida torca entre as tarefas
+            task_switch (next);
+        }
+    }
+    task_exit(0);
+}
